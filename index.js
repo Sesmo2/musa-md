@@ -1,80 +1,79 @@
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const { Client, LocalAuth } = require('whatsapp-web.js');
+
+const client = new Client({
+  authStrategy: new LocalAuth(),
+  webVersionCache: {
+    type: 'remote',
+    const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
 
-// Load commands
+// Load commands from /commands
 const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
-const commands = {};
+const commandFiles = fs.existsSync(commandsPath)
+  ? fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'))
+  : [];
 
+const commands = {};
 for (const file of commandFiles) {
-    const command = require(`./commands/${file}`);
-    commands[command.name] = command;
+  const command = require(`./commands/${file}`);
+  commands[command.name] = command;
 }
 
-// Init WhatsApp client
+// WhatsApp Client Setup with Pairing Code Support
 const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: {
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    }
+  authStrategy: new LocalAuth(),
+  webVersionCache: {
+    type: 'remote',
+    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+  },
+  puppeteer: {
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  },
+  takeoverOnConflict: true,
 });
 
-// Show QR code in terminal
-client.on('qr', (qr) => {
-    qrcode.generate(qr, { small: true });
+// Show pairing code in terminal
+client.on('pairing-code', (code) => {
+  console.log('\n=== WHATSAPP PAIRING CODE ===\n');
+  console.log('Pairing Code:', code);
+  console.log('\n1. Open WhatsApp > Linked Devices');
+  console.log('2. Tap "Link a device" > Use pairing code');
+  console.log('3. Enter the code above\n');
 });
 
-// Confirm bot is ready
+// Ready event
+client.on('ready', () => {
+  console.log('✅ Bot is connected and ready.');
+
+  // Keep online presence
+  setInterval(() => {
+    client.sendPresenceAvailable();
+  }, 20 * 1000);
+});
+
+// Listen for messages
+client.on('message', async (msg) => {
+  const text = msg.body.toLowerCase();
+  if (commands[text]) {
+    await commands[text].execute(msg);
+  }
+});
+
+// Placeholder for auto status view
 client.on('ready', async () => {
-    console.log('Bot is ready!');
-    setInterval(() => {
-        client.sendPresenceAvailable(); // Always-online trick
-    }, 20 * 1000); // every 20 seconds
-});
-
-// Message event
-client.on('message', async msg => {
-    const text = msg.body.toLowerCase();
-    if (commands[text]) {
-        await commands[text].execute(msg);
+  console.log('Auto status check running every 15s (placeholder)');
+  setInterval(async () => {
+    try {
+      // Replace with actual status check logic when API supports it
+      console.log('[Status Check] Simulating status view...');
+    } catch (err) {
+      console.error('Error checking status:', err);
     }
-});
-
-// Auto view status every 10 seconds
-client.on('ready', async () => {
-    setInterval(async () => {
-        try {
-            const statuses = await client.getStatus();
-            // status viewing logic here (if available in newer versions of whatsapp-web.js)
-        } catch (err) {
-            console.error("Status check failed:", err);
-        }
-    }, 10000);
+  }, 15000);
 });
 
 client.initialize();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+}
