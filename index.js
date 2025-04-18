@@ -1,79 +1,91 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
-
-const client = new Client({
-  authStrategy: new LocalAuth(),
-  webVersionCache: {
-    type: 'remote',
-    const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
+const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, PHONENUMBER_MCC } = require('@whiskeysockets/baileys');
+const readline = require('readline');
 const fs = require('fs');
-const path = require('path');
+const pino = require('pino');
+const NodeCache = require('node-cache');
+const qrcode = require('qrcode-terminal');
 
-// Load commands from /commands
-const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.existsSync(commandsPath)
-  ? fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'))
-  : [];
+// Utility for CLI input
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+});
 
-const commands = {};
-for (const file of commandFiles) {
-  const command = require(`./commands/${file}`);
-  commands[command.name] = command;
+// Ask for owner number
+function ask(question) {
+  return new Promise(resolve => rl.question(question, resolve));
 }
 
-// WhatsApp Client Setup with Pairing Code Support
-const client = new Client({
-  authStrategy: new LocalAuth(),
-  webVersionCache: {
-    type: 'remote',
-    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
-  },
-  puppeteer: {
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  },
-  takeoverOnConflict: true,
-});
+// Main function
+async function startBot() {
+  const ownerInput = await ask('Enter your WhatsApp number (e.g. 23480xxxxxx): ');
+  const OWNER_JID = ownerInput.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+  rl.close();
 
-// Show pairing code in terminal
-client.on('pairing-code', (code) => {
-  console.log('\n=== WHATSAPP PAIRING CODE ===\n');
-  console.log('Pairing Code:', code);
-  console.log('\n1. Open WhatsApp > Linked Devices');
-  console.log('2. Tap "Link a device" > Use pairing code');
-  console.log('3. Enter the code above\n');
-});
+  const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+  const { version } = await fetchLatestBaileysVersion();
+  const msgRetryCache = new NodeCache();
 
-// Ready event
-client.on('ready', () => {
-  console.log('✅ Bot is connected and ready.');
+  const sock = makeWASocket({
+    version,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, pino().info)
+    },
+    printQRInTerminal: true,
+    msgRetryCache,
+    logger: pino({ level: 'silent' })
+  });
 
-  // Keep online presence
-  setInterval(() => {
-    client.sendPresenceAvailable();
-  }, 20 * 1000);
-});
+  // Pairing code support
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, qr, lastDisconnect, pairingCode } = update;
 
-// Listen for messages
-client.on('message', async (msg) => {
-  const text = msg.body.toLowerCase();
-  if (commands[text]) {
-    await commands[text].execute(msg);
-  }
-});
-
-// Placeholder for auto status view
-client.on('ready', async () => {
-  console.log('Auto status check running every 15s (placeholder)');
-  setInterval(async () => {
-    try {
-      // Replace with actual status check logic when API supports it
-      console.log('[Status Check] Simulating status view...');
-    } catch (err) {
-      console.error('Error checking status:', err);
+    if (connection === 'connecting') {
+      console.log('[!] Connecting...');
     }
-  }, 15000);
-});
 
-client.initialize();
+    if (connection === 'open') {
+      const sessionId = `SESSION-${Date.now()}`;
+      fs.writeFileSync('session_id.txt', sessionId);
+      console.log('[+] Connected successfully!');
+      console.log(`[+] Session ID: ${sessionId}`);
+      await sock.sendMessage(OWNER_JID, { text: `✅ *New WhatsApp Bot Session Created!*\n\nSession ID: *${sessionId}*` });
+    }
+
+    if (qr) {
+      console.log('[QR] Scan the code above with WhatsApp.');
+    }
+
+    if (pairingCode) {
+      console.log(`[PAIRING CODE] Use this code to link: ${pairingCode}`);
+    }
+
+    if (connection === 'close') {
+      console.log('[!] Connection closed. Reconnecting...');
+      startBot();
+    }
+  });
+
+  // Handle new credentials
+  sock.ev.on('creds.update', saveCreds);
+
+  // Basic command handler
+  sock.ev.on('messages.upsert', async ({ messages }) => {
+    const msg = messages[0];
+    if (!msg.message || msg.key.fromMe) return;
+
+    const jid = msg.key.remoteJid;
+    const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+
+    if (text === '.ping') {
+      await sock.sendMessage(jid, { text: 'Pong!' });
+    } else if (text === '.help') {
+      await sock.sendMessage(jid, {
+        text: '*Available Commands:*\n\n.ping - Check bot status\n.help - Show this menu'
+      });
+    }
+  });
 }
+
+startBot();
