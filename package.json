@@ -1,14 +1,14 @@
 {
-  "name": "whatsapp-bot",
+  "name": "musa-md",
   "version": "1.0.0",
-  "description": "Advanced WhatsApp bot",
+  "description": "WhatsApp bot with QR/Pairing login, session ID DM, and basic commands.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "puppeteer": "^21.3.8",
-    "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.23.0"
+    "@whiskeysockets/baileys": "^6.6.0",
+    "pino": "^8.0.0",
+    "qrcode-terminal": "^0.12.0"
   }
 }
